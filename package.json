@@ -1,0 +1,50 @@
+{
+  "name": "@botbell/mcp-server",
+  "version": "0.1.0",
+  "description": "BotBell MCP Server - Let AI assistants send push notifications to your phone",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "botbell-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "mcp",
+    "botbell",
+    "notifications",
+    "push",
+    "ai"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qq418716640/botbell-mcp.git"
+  },
+  "homepage": "https://botbell.app/docs/mcp",
+  "bugs": {
+    "url": "https://github.com/qq418716640/botbell-mcp/issues"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "README.zh-CN.md"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

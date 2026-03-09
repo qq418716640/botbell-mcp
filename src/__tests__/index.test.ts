@@ -217,6 +217,51 @@ describe("PAT mode (pak_ token)", () => {
     expect(text).toContain("No own bots found");
   });
 
+  it("registers botbell_get_quota tool", async () => {
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name)).toContain("botbell_get_quota");
+  });
+
+  it("botbell_get_quota returns formatted quota info", async () => {
+    fetchMock.mockRestore();
+    fetchMock = mockFetch(async () =>
+      jsonResponse(200, {
+        code: 0,
+        data: { plan: "free", monthly_limit: 300, used: 42, remaining: 258, reset_at: 1743465600 },
+      })
+    );
+
+    const result = await client.callTool({ name: "botbell_get_quota", arguments: {} });
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    expect(text).toContain("Plan: free");
+    expect(text).toContain("Used: 42 / 300");
+    expect(text).toContain("Remaining: 258");
+    expect(text).toContain("Resets:");
+  });
+
+  it("botbell_get_quota shows upgrade hint when exhausted", async () => {
+    fetchMock.mockRestore();
+    fetchMock = mockFetch(async () =>
+      jsonResponse(200, {
+        code: 0,
+        data: { plan: "free", monthly_limit: 300, used: 300, remaining: 0, reset_at: 1743465600 },
+      })
+    );
+
+    const result = await client.callTool({ name: "botbell_get_quota", arguments: {} });
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    expect(text).toContain("Upgrade to Pro");
+  });
+
+  it("botbell_get_quota calls correct API endpoint", async () => {
+    await client.callTool({ name: "botbell_get_quota", arguments: {} });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:8090/v1/account/quota");
+    expect(init.method).toBe("GET");
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer pak_test123");
+  });
+
   it("botbell_create_bot sends correct request", async () => {
     fetchMock.mockRestore();
     fetchMock = mockFetch(async (_url, init) => {
@@ -343,6 +388,11 @@ describe("Bot token mode (bt_ token)", () => {
   afterEach(async () => {
     await cleanup();
     fetchMock.mockRestore();
+  });
+
+  it("does not register get_quota in bot token mode", async () => {
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name)).not.toContain("botbell_get_quota");
   });
 
   it("registers only send and get_replies (no list_bots/create_bot)", async () => {

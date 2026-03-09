@@ -165,7 +165,7 @@ export function createServer(
 
   const server = new McpServer({
     name: "BotBell",
-    version: "0.2.0",
+    version: "0.2.1",
   });
 
   function api(method: string, path: string, body?: Record<string, unknown>) {
@@ -212,6 +212,37 @@ export function createServer(
             }
           }
 
+          return textResult(lines.join("\n"));
+        } catch (error) {
+          return errorResult(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    );
+
+    server.tool(
+      "botbell_get_quota",
+      "Check your BotBell message quota — how many messages you've used this month and how many remain.",
+      {},
+      async () => {
+        try {
+          const result = await api("GET", "/account/quota");
+          if (!result.ok) return errorResult(`Failed to get quota: ${handleApiError(result)}`);
+
+          const data = result.data.data as {
+            plan: string; monthly_limit: number;
+            used: number; remaining: number; reset_at: number;
+          };
+
+          const resetDate = new Date(data.reset_at * 1000).toISOString().split("T")[0];
+          const lines = [
+            `Plan: ${data.plan}`,
+            `Used: ${data.used} / ${data.monthly_limit}`,
+            `Remaining: ${data.remaining}`,
+            `Resets: ${resetDate}`,
+          ];
+          if (data.plan === "free" && data.remaining === 0) {
+            lines.push("\nQuota exhausted. Upgrade to Pro for unlimited messages.");
+          }
           return textResult(lines.join("\n"));
         } catch (error) {
           return errorResult(`Error: ${error instanceof Error ? error.message : String(error)}`);

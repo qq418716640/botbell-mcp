@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1 (2026-03-09)
+
+### Features
+
+- **`botbell_get_quota`** — New tool to check message quota usage (PAT mode only). Shows plan, used/remaining messages, and reset date.
+
 ## 0.2.0 (2026-03-09)
 
 ### Features

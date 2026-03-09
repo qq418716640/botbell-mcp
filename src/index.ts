@@ -46,9 +46,9 @@ export function textResult(msg: string) {
 
 export function handleApiError(result: { ok: boolean; status: number; data: Record<string, unknown> }): string {
   const errorData = result.data as { code?: number; message?: string };
-  if (errorData.code === 40029) return "Rate limit exceeded (max 60 messages/minute per bot)";
+  if (errorData.code === 40029) return "Rate limit exceeded (max 30 messages/minute per bot)";
   if (errorData.code === 40030) return "Monthly message quota exceeded";
-  if (errorData.code === 40003) return "Permission denied";
+  if (errorData.code === 40003) return errorData.message || "Permission denied";
   return errorData.message || `API error (HTTP ${result.status})`;
 }
 
@@ -102,7 +102,7 @@ async function sendViaBotToken(
   if (!response.ok) {
     const errorData = result as { code?: number; message?: string };
     const errorMsg = errorData.code === 40029
-      ? "Rate limit exceeded (max 60 messages/minute per bot)"
+      ? "Rate limit exceeded (max 30 messages/minute per bot)"
       : errorData.code === 40030
       ? "Monthly message quota exceeded"
       : errorData.message || `API error (HTTP ${response.status})`;
@@ -140,12 +140,13 @@ async function pollViaBotToken(
 
 function buildMessageBody(args: {
   message: string; title?: string; url?: string;
-  image_url?: string; actions?: unknown[];
+  image_url?: string; actions_description?: string; actions?: unknown[];
 }): Record<string, unknown> {
   const body: Record<string, unknown> = { message: args.message };
   if (args.title) body.title = args.title;
   if (args.url) body.url = args.url;
   if (args.image_url) body.image_url = args.image_url;
+  if (args.actions_description) body.actions_description = args.actions_description;
   if (args.actions) body.actions = args.actions;
   return body;
 }
@@ -288,6 +289,7 @@ export function createServer(
       title: z.string().max(256).optional().describe("Message title (optional)"),
       url: z.string().url().max(2048).optional().describe("URL to attach (optional)"),
       image_url: z.string().url().max(2048).optional().describe("Image URL to attach (optional)"),
+      actions_description: z.string().max(256).optional().describe("Description text shown above action buttons (optional, max 256 chars)"),
       actions: actionsSchema,
     };
 
@@ -311,7 +313,7 @@ export function createServer(
           const { bot_id, alias, ...msgArgs } = args as {
             bot_id?: string; alias?: string;
             message: string; title?: string; url?: string;
-            image_url?: string; actions?: unknown[];
+            image_url?: string; actions_description?: string; actions?: unknown[];
           };
           const body = buildMessageBody(msgArgs);
 
@@ -346,6 +348,7 @@ export function createServer(
       title: z.string().max(256).optional().describe("Message title (optional)"),
       url: z.string().url().max(2048).optional().describe("URL to attach (optional)"),
       image_url: z.string().url().max(2048).optional().describe("Image URL to attach (optional)"),
+      actions_description: z.string().max(256).optional().describe("Description text shown above action buttons (optional, max 256 chars)"),
       actions: actionsSchema,
     };
 
@@ -366,7 +369,7 @@ export function createServer(
           const { alias, ...msgArgs } = args as {
             alias?: string;
             message: string; title?: string; url?: string;
-            image_url?: string; actions?: unknown[];
+            image_url?: string; actions_description?: string; actions?: unknown[];
           };
           const body = buildMessageBody(msgArgs);
 
@@ -493,8 +496,9 @@ async function main() {
     );
   }
 
+  const apiBase = process.env.BOTBELL_API_BASE || DEFAULT_API_BASE;
   const extraTokens = parseExtraTokens(process.env.BOTBELL_EXTRA_TOKENS || "");
-  const server = createServer(token, undefined, extraTokens);
+  const server = createServer(token, apiBase, extraTokens);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

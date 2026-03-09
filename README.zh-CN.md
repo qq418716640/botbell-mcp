@@ -142,6 +142,33 @@ npm install -g @botbell/mcp-server
 |------|------|------|
 | limit | 否 | 最多获取条数（默认 20） |
 
+## 额外 Token
+
+如果需要向多个账号的 Bot 发送通知，可以通过 `BOTBELL_EXTRA_TOKENS` 环境变量配置额外的 Bot Token。
+
+格式：`别名1:bt_token1,别名2:bt_token2`
+
+```json
+{
+  "mcpServers": {
+    "botbell": {
+      "command": "botbell-mcp",
+      "env": {
+        "BOTBELL_TOKEN": "pak_你的PAT",
+        "BOTBELL_EXTRA_TOKENS": "team-ops:bt_abc123,home:bt_xyz789"
+      }
+    }
+  }
+}
+```
+
+配置额外 Token 后：
+
+- `botbell_send` 和 `botbell_get_replies` 工具新增 `alias` 参数
+- 通过 `alias` 指定使用哪个额外 Token 发送消息
+- PAT 模式下，`botbell_list_bots` 会同时显示额外 Bot
+- 不传 `alias` 时默认使用主 Token（`BOTBELL_TOKEN`）
+
 ## Cursor / 其他 MCP 客户端
 
 在 MCP 配置中添加：

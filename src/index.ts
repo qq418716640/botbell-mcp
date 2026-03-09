@@ -52,28 +52,138 @@ export function handleApiError(result: { ok: boolean; status: number; data: Reco
   return errorData.message || `API error (HTTP ${result.status})`;
 }
 
+/**
+ * Parse "name1:bt_token1,name2:bt_token2" into a Map.
+ */
+export function parseExtraTokens(raw: string): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!raw.trim()) return map;
+  for (const pair of raw.split(",")) {
+    const sep = pair.indexOf(":");
+    if (sep <= 0) continue;
+    const alias = pair.slice(0, sep).trim();
+    const token = pair.slice(sep + 1).trim();
+    if (alias && token.startsWith("bt_")) {
+      map.set(alias, token);
+    }
+  }
+  return map;
+}
+
+// ============================================================
+// Shared action schema
+// ============================================================
+
+const actionSchema = z.object({
+  key: z.string().max(64).describe("Action identifier returned when user taps"),
+  label: z.string().max(64).describe("Button text shown to user"),
+  type: z.enum(["button", "input"]).optional().describe("'button' (default) sends label as reply; 'input' opens a text field for custom input"),
+  placeholder: z.string().max(128).optional().describe("Placeholder text for input field (only used when type is 'input')"),
+});
+
+const actionsSchema = z.array(actionSchema).max(5).optional()
+  .describe("Quick reply buttons (max 5). Use type 'input' for free-text option.");
+
+// ============================================================
+// Helpers for sending/polling via a bot token
+// ============================================================
+
+async function sendViaBotToken(
+  btToken: string, apiBase: string,
+  body: Record<string, unknown>,
+): Promise<ReturnType<typeof textResult>> {
+  const response = await fetch(`${apiBase}/push/${btToken}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const result = await response.json() as Record<string, unknown>;
+
+  if (!response.ok) {
+    const errorData = result as { code?: number; message?: string };
+    const errorMsg = errorData.code === 40029
+      ? "Rate limit exceeded (max 60 messages/minute per bot)"
+      : errorData.code === 40030
+      ? "Monthly message quota exceeded"
+      : errorData.message || `API error (HTTP ${response.status})`;
+    return errorResult(`Failed to send: ${errorMsg}`);
+  }
+
+  const data = result.data as Record<string, unknown>;
+  return textResult(
+    `Notification sent successfully.\n` +
+    `Message ID: ${data.message_id}\n` +
+    `Delivered: ${data.delivered}\n` +
+    `Timestamp: ${data.timestamp}`
+  );
+}
+
+async function pollViaBotToken(
+  btToken: string, apiBase: string, limit: number,
+): Promise<ReturnType<typeof textResult>> {
+  const result = await apiRequest(btToken, "GET", `/messages/poll?limit=${limit}`, undefined, apiBase);
+  if (!result.ok) return errorResult(`Failed to fetch replies: HTTP ${result.status}`);
+
+  const data = result.data.data as { messages: Array<Record<string, unknown>> };
+  const messages = data.messages;
+
+  if (!messages || messages.length === 0) {
+    return textResult("No new replies.");
+  }
+
+  const text = messages.map((m) =>
+    `[${new Date((m.timestamp as number) * 1000).toISOString()}]${m.action ? ` [action:${m.action}]` : ""} ${m.content}`
+  ).join("\n");
+
+  return textResult(`${messages.length} new reply(s):\n\n${text}`);
+}
+
+function buildMessageBody(args: {
+  message: string; title?: string; url?: string;
+  image_url?: string; actions?: unknown[];
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = { message: args.message };
+  if (args.title) body.title = args.title;
+  if (args.url) body.url = args.url;
+  if (args.image_url) body.image_url = args.image_url;
+  if (args.actions) body.actions = args.actions;
+  return body;
+}
+
 // ============================================================
 // Server factory
 // ============================================================
 
-export function createServer(token: string, apiBase: string = DEFAULT_API_BASE): McpServer {
+export function createServer(
+  token: string,
+  apiBase: string = DEFAULT_API_BASE,
+  extraTokens: Map<string, string> = new Map(),
+): McpServer {
   const isPatMode = token.startsWith("pak_");
+  const hasExtras = extraTokens.size > 0;
+  const aliasNames = [...extraTokens.keys()];
 
   const server = new McpServer({
     name: "BotBell",
-    version: "0.1.0",
+    version: "0.2.0",
   });
 
   function api(method: string, path: string, body?: Record<string, unknown>) {
     return apiRequest(token, method, path, body, apiBase);
   }
 
-  // PAT-mode tools: list_bots, create_bot
+  function resolveAlias(alias: string): string | undefined {
+    return extraTokens.get(alias);
+  }
+
+  // ── PAT-mode tools: list_bots, create_bot ──
+
   if (isPatMode) {
     server.tool(
       "botbell_list_bots",
       "List all bots available to you in BotBell. " +
-      "Use this to find the bot_id before sending a notification.",
+      "Use this to find the bot_id or alias before sending a notification." +
+      (hasExtras ? ` Extra tokens configured: ${aliasNames.join(", ")}.` : ""),
       {},
       async () => {
         try {
@@ -81,15 +191,28 @@ export function createServer(token: string, apiBase: string = DEFAULT_API_BASE):
           if (!result.ok) return errorResult(`Failed to list bots: ${handleApiError(result)}`);
 
           const data = result.data.data as { bots: Array<Record<string, unknown>> };
-          if (!data.bots || data.bots.length === 0) {
-            return textResult("No bots found. Create one first with botbell_create_bot.");
+          const lines: string[] = [];
+
+          // Own bots
+          if (data.bots && data.bots.length > 0) {
+            lines.push(`Your bots (${data.bots.length}):`);
+            for (const b of data.bots) {
+              lines.push(`- ${b.name} (${b.bot_id})${b.description ? ` — ${b.description}` : ""}`);
+            }
+          } else {
+            lines.push("No own bots found. Create one with botbell_create_bot.");
           }
 
-          const text = data.bots.map((b) =>
-            `- ${b.name} (${b.bot_id})${b.description ? ` — ${b.description}` : ""}`
-          ).join("\n");
+          // Extra tokens
+          if (hasExtras) {
+            lines.push("");
+            lines.push(`External bots (${extraTokens.size}):`);
+            for (const alias of aliasNames) {
+              lines.push(`- ${alias} (use alias="${alias}" to send/poll)`);
+            }
+          }
 
-          return textResult(`${data.bots.length} bot(s):\n\n${text}`);
+          return textResult(lines.join("\n"));
         } catch (error) {
           return errorResult(`Error: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -125,36 +248,51 @@ export function createServer(token: string, apiBase: string = DEFAULT_API_BASE):
     );
   }
 
-  // Send notification (both modes)
+  // ── Send notification ──
+
   if (isPatMode) {
+    // PAT mode: bot_id for own bots, alias for external bots
+    const sendSchema: Record<string, z.ZodType> = {
+      message: z.string().max(4096).describe("Message content (required, max 4096 chars)"),
+      title: z.string().max(256).optional().describe("Message title (optional)"),
+      url: z.string().url().max(2048).optional().describe("URL to attach (optional)"),
+      image_url: z.string().url().max(2048).optional().describe("Image URL to attach (optional)"),
+      actions: actionsSchema,
+    };
+
+    if (hasExtras) {
+      sendSchema.bot_id = z.string().optional().describe("Bot ID for your own bot (use botbell_list_bots to find it). Provide either bot_id or alias.");
+      sendSchema.alias = z.string().optional().describe(`Alias for an external bot token (${aliasNames.join(", ")}). Provide either bot_id or alias.`);
+    } else {
+      sendSchema.bot_id = z.string().describe("Bot ID to send from (use botbell_list_bots to find it)");
+    }
+
     server.tool(
       "botbell_send",
       "Send a push notification to the user's iPhone/Mac via BotBell. " +
-      "Use botbell_list_bots first to find the bot_id. " +
-      "Use this to deliver task results, alerts, reminders, or any message " +
-      "the user should see on their phone. " +
+      (hasExtras
+        ? "Use bot_id for your own bots or alias for external bots. Use botbell_list_bots to see all available targets. "
+        : "Use botbell_list_bots first to find the bot_id. ") +
       "You can include action buttons for quick replies. Use type 'input' to let the user type a custom response.",
-      {
-        bot_id: z.string().describe("Bot ID to send from (use botbell_list_bots to find it)"),
-        message: z.string().max(4096).describe("Message content (required, max 4096 chars)"),
-        title: z.string().max(256).optional().describe("Message title (optional, shown as notification header)"),
-        url: z.string().url().max(2048).optional().describe("URL to attach (optional, user can tap to open)"),
-        image_url: z.string().url().max(2048).optional().describe("Image URL to attach (optional)"),
-        actions: z.array(z.object({
-          key: z.string().max(64).describe("Action identifier returned when user taps"),
-          label: z.string().max(64).describe("Button text shown to user"),
-          type: z.enum(["button", "input"]).optional().describe("'button' (default) sends label as reply; 'input' opens a text field for custom input"),
-          placeholder: z.string().max(128).optional().describe("Placeholder text for input field (only used when type is 'input')"),
-        })).max(5).optional().describe("Quick reply buttons (max 5). Use type 'input' for free-text option."),
-      },
-      async ({ bot_id, message, title, url, image_url, actions }) => {
+      sendSchema,
+      async (args) => {
         try {
-          const body: Record<string, unknown> = { message };
-          if (title) body.title = title;
-          if (url) body.url = url;
-          if (image_url) body.image_url = image_url;
-          if (actions) body.actions = actions;
+          const { bot_id, alias, ...msgArgs } = args as {
+            bot_id?: string; alias?: string;
+            message: string; title?: string; url?: string;
+            image_url?: string; actions?: unknown[];
+          };
+          const body = buildMessageBody(msgArgs);
 
+          // Route via alias (extra token)
+          if (alias) {
+            const btToken = resolveAlias(alias);
+            if (!btToken) return errorResult(`Unknown alias "${alias}". Available: ${aliasNames.join(", ")}`);
+            return await sendViaBotToken(btToken, apiBase, body);
+          }
+
+          // Route via bot_id (PAT)
+          if (!bot_id) return errorResult("Provide either bot_id or alias.");
           const result = await api("POST", `/bots/${bot_id}/push`, body);
           if (!result.ok) return errorResult(`Failed to send: ${handleApiError(result)}`);
 
@@ -171,57 +309,45 @@ export function createServer(token: string, apiBase: string = DEFAULT_API_BASE):
       }
     );
   } else {
+    // Bot token mode: primary token by default, alias for extras
+    const sendSchema: Record<string, z.ZodType> = {
+      message: z.string().max(4096).describe("Message content (required, max 4096 chars)"),
+      title: z.string().max(256).optional().describe("Message title (optional)"),
+      url: z.string().url().max(2048).optional().describe("URL to attach (optional)"),
+      image_url: z.string().url().max(2048).optional().describe("Image URL to attach (optional)"),
+      actions: actionsSchema,
+    };
+
+    if (hasExtras) {
+      sendSchema.alias = z.string().optional().describe(
+        `Alias for an external bot token (${aliasNames.join(", ")}). Omit to use the default bot.`
+      );
+    }
+
     server.tool(
       "botbell_send",
       "Send a push notification to the user's iPhone/Mac via BotBell. " +
-      "Use this to deliver task results, alerts, reminders, or any message " +
-      "the user should see on their phone. " +
+      (hasExtras ? `You can also send via external bots: ${aliasNames.join(", ")}. ` : "") +
       "You can include action buttons for quick replies. Use type 'input' to let the user type a custom response.",
-      {
-        message: z.string().max(4096).describe("Message content (required, max 4096 chars)"),
-        title: z.string().max(256).optional().describe("Message title (optional, shown as notification header)"),
-        url: z.string().url().max(2048).optional().describe("URL to attach (optional, user can tap to open)"),
-        image_url: z.string().url().max(2048).optional().describe("Image URL to attach (optional)"),
-        actions: z.array(z.object({
-          key: z.string().max(64).describe("Action identifier returned when user taps"),
-          label: z.string().max(64).describe("Button text shown to user"),
-          type: z.enum(["button", "input"]).optional().describe("'button' (default) sends label as reply; 'input' opens a text field for custom input"),
-          placeholder: z.string().max(128).optional().describe("Placeholder text for input field (only used when type is 'input')"),
-        })).max(5).optional().describe("Quick reply buttons (max 5). Use type 'input' for free-text option."),
-      },
-      async ({ message, title, url, image_url, actions }) => {
+      sendSchema,
+      async (args) => {
         try {
-          const body: Record<string, unknown> = { message };
-          if (title) body.title = title;
-          if (url) body.url = url;
-          if (image_url) body.image_url = image_url;
-          if (actions) body.actions = actions;
+          const { alias, ...msgArgs } = args as {
+            alias?: string;
+            message: string; title?: string; url?: string;
+            image_url?: string; actions?: unknown[];
+          };
+          const body = buildMessageBody(msgArgs);
 
-          const pushUrl = `${apiBase}/push/${token}`;
-          const response = await fetch(pushUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          });
-          const result = await response.json() as Record<string, unknown>;
-
-          if (!response.ok) {
-            const errorData = result as { code?: number; message?: string };
-            const errorMsg = errorData.code === 40029
-              ? "Rate limit exceeded (max 60 messages/minute per bot)"
-              : errorData.code === 40030
-              ? "Monthly message quota exceeded"
-              : errorData.message || `API error (HTTP ${response.status})`;
-            return errorResult(`Failed to send: ${errorMsg}`);
+          // Route via alias (extra token)
+          if (alias) {
+            const btToken = resolveAlias(alias);
+            if (!btToken) return errorResult(`Unknown alias "${alias}". Available: ${aliasNames.join(", ")}`);
+            return await sendViaBotToken(btToken, apiBase, body);
           }
 
-          const data = result.data as Record<string, unknown>;
-          return textResult(
-            `Notification sent successfully.\n` +
-            `Message ID: ${data.message_id}\n` +
-            `Delivered: ${data.delivered}\n` +
-            `Timestamp: ${data.timestamp}`
-          );
+          // Default: primary bot token
+          return await sendViaBotToken(token, apiBase, body);
         } catch (error) {
           return errorResult(`Error: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -229,20 +355,42 @@ export function createServer(token: string, apiBase: string = DEFAULT_API_BASE):
     );
   }
 
-  // Get replies (both modes)
+  // ── Get replies ──
+
   if (isPatMode) {
+    const repliesSchema: Record<string, z.ZodType> = {
+      limit: z.number().int().min(1).max(100).default(20)
+        .describe("Max number of replies to fetch (default 20, max 100)"),
+    };
+
+    if (hasExtras) {
+      repliesSchema.bot_id = z.string().optional().describe("Bot ID for your own bot. Provide either bot_id or alias.");
+      repliesSchema.alias = z.string().optional().describe(`Alias for an external bot (${aliasNames.join(", ")}). Provide either bot_id or alias.`);
+    } else {
+      repliesSchema.bot_id = z.string().describe("Bot ID to check replies for");
+    }
+
     server.tool(
       "botbell_get_replies",
       "Check if the user has replied to messages in the BotBell app. " +
-      "Use botbell_list_bots first to find the bot_id. " +
+      (hasExtras
+        ? "Use bot_id for your own bots or alias for external bots. "
+        : "Use botbell_list_bots first to find the bot_id. ") +
       "Messages are consumed on fetch (won't be returned again).",
-      {
-        bot_id: z.string().describe("Bot ID to check replies for"),
-        limit: z.number().int().min(1).max(100).default(20)
-          .describe("Max number of replies to fetch (default 20, max 100)"),
-      },
-      async ({ bot_id, limit }) => {
+      repliesSchema,
+      async (args) => {
         try {
+          const { bot_id, alias, limit } = args as { bot_id?: string; alias?: string; limit: number };
+
+          // Route via alias
+          if (alias) {
+            const btToken = resolveAlias(alias);
+            if (!btToken) return errorResult(`Unknown alias "${alias}". Available: ${aliasNames.join(", ")}`);
+            return await pollViaBotToken(btToken, apiBase, limit);
+          }
+
+          // Route via bot_id (PAT)
+          if (!bot_id) return errorResult("Provide either bot_id or alias.");
           const result = await api("GET", `/bots/${bot_id}/replies?limit=${limit}`);
           if (!result.ok) return errorResult(`Failed to fetch replies: ${handleApiError(result)}`);
 
@@ -264,31 +412,33 @@ export function createServer(token: string, apiBase: string = DEFAULT_API_BASE):
       }
     );
   } else {
+    const repliesSchema: Record<string, z.ZodType> = {
+      limit: z.number().int().min(1).max(100).default(20)
+        .describe("Max number of replies to fetch (default 20, max 100)"),
+    };
+
+    if (hasExtras) {
+      repliesSchema.alias = z.string().optional().describe(
+        `Alias for an external bot (${aliasNames.join(", ")}). Omit for the default bot.`
+      );
+    }
+
     server.tool(
       "botbell_get_replies",
       "Check if the user has replied to your messages in the BotBell app. " +
       "Messages are consumed on fetch (won't be returned again).",
-      {
-        limit: z.number().int().min(1).max(100).default(20)
-          .describe("Max number of replies to fetch (default 20, max 100)"),
-      },
-      async ({ limit }) => {
+      repliesSchema,
+      async (args) => {
         try {
-          const result = await api("GET", `/messages/poll?limit=${limit}`);
-          if (!result.ok) return errorResult(`Failed to fetch replies: HTTP ${result.status}`);
+          const { alias, limit } = args as { alias?: string; limit: number };
 
-          const data = result.data.data as { messages: Array<Record<string, unknown>> };
-          const messages = data.messages;
-
-          if (!messages || messages.length === 0) {
-            return textResult("No new replies.");
+          if (alias) {
+            const btToken = resolveAlias(alias);
+            if (!btToken) return errorResult(`Unknown alias "${alias}". Available: ${aliasNames.join(", ")}`);
+            return await pollViaBotToken(btToken, apiBase, limit);
           }
 
-          const text = messages.map((m) =>
-            `[${new Date((m.timestamp as number) * 1000).toISOString()}]${m.action ? ` [action:${m.action}]` : ""} ${m.content}`
-          ).join("\n");
-
-          return textResult(`${messages.length} new reply(s):\n\n${text}`);
+          return await pollViaBotToken(token, apiBase, limit);
         } catch (error) {
           return errorResult(`Error: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -312,7 +462,8 @@ async function main() {
     );
   }
 
-  const server = createServer(token);
+  const extraTokens = parseExtraTokens(process.env.BOTBELL_EXTRA_TOKENS || "");
+  const server = createServer(token, undefined, extraTokens);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

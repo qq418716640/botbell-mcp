@@ -142,6 +142,33 @@ Fetch user replies from the BotBell app.
 |-----------|----------|-------------|
 | limit | No | Max replies to fetch (default 20) |
 
+## Extra Tokens
+
+If you need to send notifications to bots from multiple accounts, you can configure additional Bot Tokens via the `BOTBELL_EXTRA_TOKENS` environment variable.
+
+Format: `alias1:bt_token1,alias2:bt_token2`
+
+```json
+{
+  "mcpServers": {
+    "botbell": {
+      "command": "botbell-mcp",
+      "env": {
+        "BOTBELL_TOKEN": "pak_your_pat_here",
+        "BOTBELL_EXTRA_TOKENS": "team-ops:bt_abc123,home:bt_xyz789"
+      }
+    }
+  }
+}
+```
+
+When extra tokens are configured:
+
+- The `alias` parameter becomes available on `botbell_send` and `botbell_get_replies`
+- Use `alias` to route messages through a specific extra token
+- In PAT mode, `botbell_list_bots` shows extra bots alongside your own
+- Without `alias`, the primary token (`BOTBELL_TOKEN`) is used as default
+
 ## For Cursor / Other MCP Clients
 
 Add to your MCP config:

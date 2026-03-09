@@ -7,6 +7,7 @@ import {
   handleApiError,
   errorResult,
   textResult,
+  parseExtraTokens,
 } from "../index.js";
 
 // ============================================================
@@ -73,6 +74,38 @@ describe("errorResult / textResult", () => {
   });
 });
 
+describe("parseExtraTokens", () => {
+  it("parses valid pairs", () => {
+    const m = parseExtraTokens("deploy:bt_aaa,monitor:bt_bbb");
+    expect(m.size).toBe(2);
+    expect(m.get("deploy")).toBe("bt_aaa");
+    expect(m.get("monitor")).toBe("bt_bbb");
+  });
+
+  it("trims whitespace", () => {
+    const m = parseExtraTokens(" deploy : bt_aaa , monitor : bt_bbb ");
+    expect(m.get("deploy")).toBe("bt_aaa");
+    expect(m.get("monitor")).toBe("bt_bbb");
+  });
+
+  it("ignores non-bt_ tokens", () => {
+    const m = parseExtraTokens("bad:pak_xxx,good:bt_yyy");
+    expect(m.size).toBe(1);
+    expect(m.get("good")).toBe("bt_yyy");
+  });
+
+  it("handles empty string", () => {
+    expect(parseExtraTokens("").size).toBe(0);
+    expect(parseExtraTokens("  ").size).toBe(0);
+  });
+
+  it("ignores malformed entries", () => {
+    const m = parseExtraTokens("nocolon,bt_abc,:bt_xyz,ok:bt_123");
+    expect(m.size).toBe(1);
+    expect(m.get("ok")).toBe("bt_123");
+  });
+});
+
 // ============================================================
 // Integration tests via MCP Client + InMemoryTransport
 // ============================================================
@@ -88,8 +121,19 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
-async function connectClient(token: string, apiBase: string): Promise<{ client: Client; cleanup: () => Promise<void> }> {
-  const server = createServer(token, apiBase);
+function successSendResponse() {
+  return jsonResponse(200, {
+    code: 0,
+    data: { message_id: "msg_ok", delivered: true, timestamp: 1700000000 },
+  });
+}
+
+async function connectClient(
+  token: string,
+  apiBase: string,
+  extraTokens?: Map<string, string>,
+): Promise<{ client: Client; cleanup: () => Promise<void> }> {
+  const server = createServer(token, apiBase, extraTokens);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
 
@@ -105,7 +149,7 @@ async function connectClient(token: string, apiBase: string): Promise<{ client: 
   };
 }
 
-// --- PAT mode tests ---
+// --- PAT mode tests (no extras) ---
 
 describe("PAT mode (pak_ token)", () => {
   let client: Client;
@@ -133,7 +177,7 @@ describe("PAT mode (pak_ token)", () => {
     expect(names).toContain("botbell_get_replies");
   });
 
-  it("botbell_send requires bot_id in PAT mode", async () => {
+  it("botbell_send requires bot_id in PAT mode without extras", async () => {
     const { tools } = await client.listTools();
     const sendTool = tools.find((t) => t.name === "botbell_send");
     const schema = sendTool!.inputSchema as { required?: string[] };
@@ -156,7 +200,7 @@ describe("PAT mode (pak_ token)", () => {
 
     const result = await client.callTool({ name: "botbell_list_bots", arguments: {} });
     const text = (result.content as Array<{ text: string }>)[0].text;
-    expect(text).toContain("2 bot(s)");
+    expect(text).toContain("Your bots (2)");
     expect(text).toContain("Deploy Bot (bot_1)");
     expect(text).toContain("CI alerts");
     expect(text).toContain("Monitor (bot_2)");
@@ -170,7 +214,7 @@ describe("PAT mode (pak_ token)", () => {
 
     const result = await client.callTool({ name: "botbell_list_bots", arguments: {} });
     const text = (result.content as Array<{ text: string }>)[0].text;
-    expect(text).toContain("No bots found");
+    expect(text).toContain("No own bots found");
   });
 
   it("botbell_create_bot sends correct request", async () => {
@@ -191,7 +235,6 @@ describe("PAT mode (pak_ token)", () => {
     expect(text).toContain("Bot created successfully");
     expect(text).toContain("bot_new1");
 
-    // Verify request
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("http://localhost:8090/v1/bots");
     expect(init.method).toBe("POST");
@@ -219,9 +262,7 @@ describe("PAT mode (pak_ token)", () => {
     });
     const text = (result.content as Array<{ text: string }>)[0].text;
     expect(text).toContain("Notification sent successfully");
-    expect(text).toContain("msg_1");
 
-    // Verify actions in request body
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("http://localhost:8090/v1/bots/bot_1/push");
     const body = JSON.parse(init.body as string);
@@ -267,7 +308,6 @@ describe("PAT mode (pak_ token)", () => {
     expect(text).toContain("2 new reply(s)");
     expect(text).toContain("[action:approve] Yes");
     expect(text).toContain("No thanks");
-    // Second message should NOT have [action:...] prefix
     expect(text).toMatch(/\d{4}-\d{2}-\d{2}.*\] No thanks/);
   });
 
@@ -286,7 +326,7 @@ describe("PAT mode (pak_ token)", () => {
   });
 });
 
-// --- Bot token mode tests ---
+// --- Bot token mode tests (no extras) ---
 
 describe("Bot token mode (bt_ token)", () => {
   let client: Client;
@@ -323,12 +363,7 @@ describe("Bot token mode (bt_ token)", () => {
 
   it("botbell_send uses token-in-URL push endpoint", async () => {
     fetchMock.mockRestore();
-    fetchMock = mockFetch(async () =>
-      jsonResponse(200, {
-        code: 0,
-        data: { message_id: "msg_2", delivered: true, timestamp: 1700000000 },
-      })
-    );
+    fetchMock = mockFetch(async () => successSendResponse());
 
     await client.callTool({
       name: "botbell_send",
@@ -341,12 +376,7 @@ describe("Bot token mode (bt_ token)", () => {
 
   it("botbell_send with actions via bot token mode", async () => {
     fetchMock.mockRestore();
-    fetchMock = mockFetch(async () =>
-      jsonResponse(200, {
-        code: 0,
-        data: { message_id: "msg_3", delivered: true, timestamp: 1700000000 },
-      })
-    );
+    fetchMock = mockFetch(async () => successSendResponse());
 
     const actions = [
       { key: "yes", label: "Approve" },
@@ -398,12 +428,7 @@ describe("Bot token mode (bt_ token)", () => {
 
   it("botbell_send with all optional fields", async () => {
     fetchMock.mockRestore();
-    fetchMock = mockFetch(async () =>
-      jsonResponse(200, {
-        code: 0,
-        data: { message_id: "msg_full", delivered: true, timestamp: 1700000000 },
-      })
-    );
+    fetchMock = mockFetch(async () => successSendResponse());
 
     await client.callTool({
       name: "botbell_send",
@@ -423,5 +448,226 @@ describe("Bot token mode (bt_ token)", () => {
     expect(body.url).toBe("https://example.com");
     expect(body.image_url).toBe("https://example.com/img.png");
     expect(body.actions[0].type).toBe("button");
+  });
+});
+
+// --- PAT mode + extra tokens ---
+
+describe("PAT mode with extra tokens", () => {
+  let client: Client;
+  let cleanup: () => Promise<void>;
+  let fetchMock: ReturnType<typeof mockFetch>;
+  const extras = new Map([["deploy", "bt_deploy1"], ["monitor", "bt_monitor2"]]);
+
+  beforeEach(async () => {
+    fetchMock = mockFetch(async () => jsonResponse(200, { code: 0, data: {} }));
+    const conn = await connectClient("pak_test123", "http://localhost:8090/v1", extras);
+    client = conn.client;
+    cleanup = conn.cleanup;
+  });
+
+  afterEach(async () => {
+    await cleanup();
+    fetchMock.mockRestore();
+  });
+
+  it("botbell_send has optional bot_id and alias", async () => {
+    const { tools } = await client.listTools();
+    const sendTool = tools.find((t) => t.name === "botbell_send");
+    const schema = sendTool!.inputSchema as { required?: string[] };
+    // bot_id should NOT be required when extras exist
+    expect(schema.required).not.toContain("bot_id");
+  });
+
+  it("botbell_list_bots shows both own bots and external aliases", async () => {
+    fetchMock.mockRestore();
+    fetchMock = mockFetch(async () =>
+      jsonResponse(200, {
+        code: 0,
+        data: { bots: [{ name: "My Bot", bot_id: "bot_1" }] },
+      })
+    );
+
+    const result = await client.callTool({ name: "botbell_list_bots", arguments: {} });
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    expect(text).toContain("Your bots (1)");
+    expect(text).toContain("My Bot (bot_1)");
+    expect(text).toContain("External bots (2)");
+    expect(text).toContain("deploy");
+    expect(text).toContain("monitor");
+  });
+
+  it("botbell_send via alias uses push URL with extra token", async () => {
+    fetchMock.mockRestore();
+    fetchMock = mockFetch(async () => successSendResponse());
+
+    const result = await client.callTool({
+      name: "botbell_send",
+      arguments: { alias: "deploy", message: "Deployed v3" },
+    });
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    expect(text).toContain("Notification sent successfully");
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:8090/v1/push/bt_deploy1");
+  });
+
+  it("botbell_send via bot_id still uses PAT API", async () => {
+    fetchMock.mockRestore();
+    fetchMock = mockFetch(async () =>
+      jsonResponse(200, {
+        code: 0,
+        data: { message_id: "msg_pat", delivered: true, timestamp: 1700000000 },
+      })
+    );
+
+    await client.callTool({
+      name: "botbell_send",
+      arguments: { bot_id: "bot_1", message: "Hello via PAT" },
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:8090/v1/bots/bot_1/push");
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer pak_test123");
+  });
+
+  it("botbell_send with unknown alias returns error", async () => {
+    const result = await client.callTool({
+      name: "botbell_send",
+      arguments: { alias: "unknown", message: "Test" },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    expect(text).toContain('Unknown alias "unknown"');
+    expect(text).toContain("deploy");
+  });
+
+  it("botbell_send with neither bot_id nor alias returns error", async () => {
+    const result = await client.callTool({
+      name: "botbell_send",
+      arguments: { message: "No target" },
+    });
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    expect(text).toContain("bot_id or alias");
+  });
+
+  it("botbell_get_replies via alias polls with extra token", async () => {
+    fetchMock.mockRestore();
+    fetchMock = mockFetch(async () =>
+      jsonResponse(200, { code: 0, data: { messages: [] } })
+    );
+
+    await client.callTool({
+      name: "botbell_get_replies",
+      arguments: { alias: "monitor" },
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/messages/poll");
+    expect((init.headers as Record<string, string>)["X-Bot-Token"]).toBe("bt_monitor2");
+  });
+
+  it("botbell_get_replies via bot_id still uses PAT API", async () => {
+    fetchMock.mockRestore();
+    fetchMock = mockFetch(async () =>
+      jsonResponse(200, {
+        code: 0,
+        data: { messages: [{ content: "Hi", timestamp: 1700000000 }] },
+      })
+    );
+
+    await client.callTool({
+      name: "botbell_get_replies",
+      arguments: { bot_id: "bot_1" },
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/bots/bot_1/replies");
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer pak_test123");
+  });
+});
+
+// --- Bot token mode + extra tokens ---
+
+describe("Bot token mode with extra tokens", () => {
+  let client: Client;
+  let cleanup: () => Promise<void>;
+  let fetchMock: ReturnType<typeof mockFetch>;
+  const extras = new Map([["alerts", "bt_alerts1"]]);
+
+  beforeEach(async () => {
+    fetchMock = mockFetch(async () => jsonResponse(200, { code: 0, data: {} }));
+    const conn = await connectClient("bt_primary", "http://localhost:8090/v1", extras);
+    client = conn.client;
+    cleanup = conn.cleanup;
+  });
+
+  afterEach(async () => {
+    await cleanup();
+    fetchMock.mockRestore();
+  });
+
+  it("botbell_send without alias uses primary token", async () => {
+    fetchMock.mockRestore();
+    fetchMock = mockFetch(async () => successSendResponse());
+
+    await client.callTool({
+      name: "botbell_send",
+      arguments: { message: "Default bot" },
+    });
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:8090/v1/push/bt_primary");
+  });
+
+  it("botbell_send with alias uses extra token", async () => {
+    fetchMock.mockRestore();
+    fetchMock = mockFetch(async () => successSendResponse());
+
+    await client.callTool({
+      name: "botbell_send",
+      arguments: { alias: "alerts", message: "Alert!" },
+    });
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:8090/v1/push/bt_alerts1");
+  });
+
+  it("botbell_get_replies without alias uses primary token", async () => {
+    fetchMock.mockRestore();
+    fetchMock = mockFetch(async () =>
+      jsonResponse(200, { code: 0, data: { messages: [] } })
+    );
+
+    await client.callTool({
+      name: "botbell_get_replies",
+      arguments: {},
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string>)["X-Bot-Token"]).toBe("bt_primary");
+  });
+
+  it("botbell_get_replies with alias uses extra token", async () => {
+    fetchMock.mockRestore();
+    fetchMock = mockFetch(async () =>
+      jsonResponse(200, { code: 0, data: { messages: [] } })
+    );
+
+    await client.callTool({
+      name: "botbell_get_replies",
+      arguments: { alias: "alerts" },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string>)["X-Bot-Token"]).toBe("bt_alerts1");
+  });
+
+  it("has alias parameter in send schema", async () => {
+    const { tools } = await client.listTools();
+    const sendTool = tools.find((t) => t.name === "botbell_send");
+    const props = (sendTool!.inputSchema as { properties: Record<string, unknown> }).properties;
+    expect(props).toHaveProperty("alias");
   });
 });

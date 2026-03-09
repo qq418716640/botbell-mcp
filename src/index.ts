@@ -140,12 +140,15 @@ async function pollViaBotToken(
 
 function buildMessageBody(args: {
   message: string; title?: string; url?: string;
-  image_url?: string; actions_description?: string; actions?: unknown[];
+  image_url?: string; summary?: string; format?: string;
+  actions_description?: string; actions?: unknown[];
 }): Record<string, unknown> {
   const body: Record<string, unknown> = { message: args.message };
   if (args.title) body.title = args.title;
   if (args.url) body.url = args.url;
   if (args.image_url) body.image_url = args.image_url;
+  if (args.summary) body.summary = args.summary;
+  if (args.format) body.format = args.format;
   if (args.actions_description) body.actions_description = args.actions_description;
   if (args.actions) body.actions = args.actions;
   return body;
@@ -289,6 +292,8 @@ export function createServer(
       title: z.string().max(256).optional().describe("Message title (optional)"),
       url: z.string().url().max(2048).optional().describe("URL to attach (optional)"),
       image_url: z.string().url().max(2048).optional().describe("Image URL to attach (optional)"),
+      summary: z.string().max(512).optional().describe("Custom summary for long messages (optional, max 512 chars)"),
+      format: z.enum(["text", "markdown"]).optional().describe("Message format: 'text' (default) or 'markdown' for Markdown rendering"),
       actions_description: z.string().max(256).optional().describe("Description text shown above action buttons (optional, max 256 chars)"),
       actions: actionsSchema,
     };
@@ -313,7 +318,8 @@ export function createServer(
           const { bot_id, alias, ...msgArgs } = args as {
             bot_id?: string; alias?: string;
             message: string; title?: string; url?: string;
-            image_url?: string; actions_description?: string; actions?: unknown[];
+            image_url?: string; summary?: string; format?: string;
+            actions_description?: string; actions?: unknown[];
           };
           const body = buildMessageBody(msgArgs);
 
@@ -348,6 +354,8 @@ export function createServer(
       title: z.string().max(256).optional().describe("Message title (optional)"),
       url: z.string().url().max(2048).optional().describe("URL to attach (optional)"),
       image_url: z.string().url().max(2048).optional().describe("Image URL to attach (optional)"),
+      summary: z.string().max(512).optional().describe("Custom summary for long messages (optional, max 512 chars)"),
+      format: z.enum(["text", "markdown"]).optional().describe("Message format: 'text' (default) or 'markdown' for Markdown rendering"),
       actions_description: z.string().max(256).optional().describe("Description text shown above action buttons (optional, max 256 chars)"),
       actions: actionsSchema,
     };
@@ -369,7 +377,8 @@ export function createServer(
           const { alias, ...msgArgs } = args as {
             alias?: string;
             message: string; title?: string; url?: string;
-            image_url?: string; actions_description?: string; actions?: unknown[];
+            image_url?: string; summary?: string; format?: string;
+            actions_description?: string; actions?: unknown[];
           };
           const body = buildMessageBody(msgArgs);
 
@@ -504,7 +513,9 @@ async function main() {
 }
 
 // Only auto-start when run directly (not when imported in tests)
-const isDirectRun = import.meta.url === `file://${process.argv[1]}`;
+import { realpathSync } from "fs";
+const resolvedArgv = realpathSync(process.argv[1] || "");
+const isDirectRun = import.meta.url === `file://${resolvedArgv}`;
 if (isDirectRun) {
   main().catch((error) => {
     console.error("Fatal error:", error);

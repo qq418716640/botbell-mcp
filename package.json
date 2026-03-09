@@ -31,7 +31,8 @@
     "url": "https://github.com/qq418716640/botbell-mcp/issues"
   },
   "files": [
-    "dist",
+    "dist/index.js",
+    "dist/index.d.ts",
     "LICENSE",
     "README.md",
     "README.zh-CN.md"

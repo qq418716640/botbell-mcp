@@ -132,7 +132,7 @@ async function pollViaBotToken(
   }
 
   const text = messages.map((m) =>
-    `[${new Date((m.timestamp as number) * 1000).toISOString()}]${m.action ? ` [action:${m.action}]` : ""} ${m.content}`
+    `[${new Date((m.timestamp as number) * 1000).toISOString()}]${m.action ? ` [action:${m.action}]` : ""}${m.reply_to ? ` [reply_to:${m.reply_to}]` : ""} ${m.content}`
   ).join("\n");
 
   return textResult(`${messages.length} new reply(s):\n\n${text}`);
@@ -142,6 +142,7 @@ function buildMessageBody(args: {
   message: string; title?: string; url?: string;
   image_url?: string; summary?: string; format?: string;
   actions_description?: string; actions?: unknown[];
+  reply_mode?: string;
 }): Record<string, unknown> {
   const body: Record<string, unknown> = { message: args.message };
   if (args.title) body.title = args.title;
@@ -151,6 +152,7 @@ function buildMessageBody(args: {
   if (args.format) body.format = args.format;
   if (args.actions_description) body.actions_description = args.actions_description;
   if (args.actions) body.actions = args.actions;
+  if (args.reply_mode) body.reply_mode = args.reply_mode;
   return body;
 }
 
@@ -296,6 +298,8 @@ export function createServer(
       format: z.enum(["text", "markdown"]).optional().describe("Message format: 'text' (default) or 'markdown' for Markdown rendering"),
       actions_description: z.string().max(256).optional().describe("Description text shown above action buttons (optional, max 256 chars)"),
       actions: actionsSchema,
+      reply_mode: z.enum(["open", "actions_only", "none"]).optional()
+        .describe("Controls how the recipient can reply: 'open' (default, free text + actions), 'actions_only' (only action buttons, no free text), 'none' (pure notification, no reply)"),
     };
 
     if (hasExtras) {
@@ -320,6 +324,7 @@ export function createServer(
             message: string; title?: string; url?: string;
             image_url?: string; summary?: string; format?: string;
             actions_description?: string; actions?: unknown[];
+            reply_mode?: string;
           };
           const body = buildMessageBody(msgArgs);
 
@@ -358,6 +363,8 @@ export function createServer(
       format: z.enum(["text", "markdown"]).optional().describe("Message format: 'text' (default) or 'markdown' for Markdown rendering"),
       actions_description: z.string().max(256).optional().describe("Description text shown above action buttons (optional, max 256 chars)"),
       actions: actionsSchema,
+      reply_mode: z.enum(["open", "actions_only", "none"]).optional()
+        .describe("Controls how the recipient can reply: 'open' (default, free text + actions), 'actions_only' (only action buttons, no free text), 'none' (pure notification, no reply)"),
     };
 
     if (hasExtras) {
@@ -379,6 +386,7 @@ export function createServer(
             message: string; title?: string; url?: string;
             image_url?: string; summary?: string; format?: string;
             actions_description?: string; actions?: unknown[];
+            reply_mode?: string;
           };
           const body = buildMessageBody(msgArgs);
 

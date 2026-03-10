@@ -8,6 +8,7 @@ import {
   errorResult,
   textResult,
   parseExtraTokens,
+  formatPollMessage,
 } from "../index.js";
 
 // ============================================================
@@ -71,6 +72,42 @@ describe("errorResult / textResult", () => {
     const r = textResult("ok");
     expect(r).not.toHaveProperty("isError");
     expect(r.content[0].text).toBe("ok");
+  });
+});
+
+describe("formatPollMessage", () => {
+  it("formats basic message with timestamp", () => {
+    const result = formatPollMessage({ content: "Hello", timestamp: 1700000000 });
+    expect(result).toContain("[2023-11-14");
+    expect(result).toContain(" Hello");
+    expect(result).not.toContain("[action:");
+    expect(result).not.toContain("[reply_to:");
+  });
+
+  it("includes action when present", () => {
+    const result = formatPollMessage({ content: "Yes", timestamp: 1700000000, action: "approve" });
+    expect(result).toContain("[action:approve]");
+  });
+
+  it("includes reply_to when present", () => {
+    const result = formatPollMessage({ content: "Reply", timestamp: 1700000000, reply_to: "msg_123" });
+    expect(result).toContain("[reply_to:msg_123]");
+  });
+
+  it("includes both action and reply_to when present", () => {
+    const result = formatPollMessage({ content: "Yes", timestamp: 1700000000, action: "approve", reply_to: "msg_456" });
+    expect(result).toContain("[action:approve]");
+    expect(result).toContain("[reply_to:msg_456]");
+    // action comes before reply_to
+    const actionIdx = result.indexOf("[action:");
+    const replyIdx = result.indexOf("[reply_to:");
+    expect(actionIdx).toBeLessThan(replyIdx);
+  });
+
+  it("omits action and reply_to when absent", () => {
+    const result = formatPollMessage({ content: "Plain", timestamp: 1700000000 });
+    expect(result).not.toContain("[action:");
+    expect(result).not.toContain("[reply_to:");
   });
 });
 
@@ -316,6 +353,25 @@ describe("PAT mode (pak_ token)", () => {
     expect(body.actions[1].placeholder).toBe("Enter reason");
   });
 
+  it("botbell_send passes reply_mode to API", async () => {
+    fetchMock.mockRestore();
+    fetchMock = mockFetch(async () =>
+      jsonResponse(200, {
+        code: 0,
+        data: { message_id: "msg_rm", delivered: true, timestamp: 1700000000 },
+      })
+    );
+
+    await client.callTool({
+      name: "botbell_send",
+      arguments: { bot_id: "bot_1", message: "Confirm?", reply_mode: "actions_only" },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.reply_mode).toBe("actions_only");
+  });
+
   it("botbell_send handles API error", async () => {
     fetchMock.mockRestore();
     fetchMock = mockFetch(async () =>
@@ -354,6 +410,32 @@ describe("PAT mode (pak_ token)", () => {
     expect(text).toContain("[action:approve] Yes");
     expect(text).toContain("No thanks");
     expect(text).toMatch(/\d{4}-\d{2}-\d{2}.*\] No thanks/);
+  });
+
+  it("botbell_get_replies includes reply_to in output", async () => {
+    fetchMock.mockRestore();
+    fetchMock = mockFetch(async () =>
+      jsonResponse(200, {
+        code: 0,
+        data: {
+          messages: [
+            { content: "Yes", timestamp: 1700000000, action: "approve", reply_to: "msg_100" },
+            { content: "Plain reply", timestamp: 1700000001 },
+          ],
+        },
+      })
+    );
+
+    const result = await client.callTool({
+      name: "botbell_get_replies",
+      arguments: { bot_id: "bot_1" },
+    });
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    expect(text).toContain("[reply_to:msg_100]");
+    expect(text).toContain("[action:approve]");
+    expect(text).toContain("Yes");
+    // Plain reply should not have reply_to
+    expect(text).toContain("Plain reply");
   });
 
   it("botbell_get_replies handles empty queue", async () => {
@@ -443,6 +525,44 @@ describe("Bot token mode (bt_ token)", () => {
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string);
     expect(body.actions).toEqual(actions);
+  });
+
+  it("botbell_send passes reply_mode to API", async () => {
+    fetchMock.mockRestore();
+    fetchMock = mockFetch(async () => successSendResponse());
+
+    await client.callTool({
+      name: "botbell_send",
+      arguments: { message: "Info only", reply_mode: "none" },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.reply_mode).toBe("none");
+  });
+
+  it("botbell_get_replies includes reply_to in output", async () => {
+    fetchMock.mockRestore();
+    fetchMock = mockFetch(async () =>
+      jsonResponse(200, {
+        code: 0,
+        data: {
+          messages: [
+            { content: "Got it", timestamp: 1700000000, reply_to: "msg_200" },
+            { content: "Free text", timestamp: 1700000001 },
+          ],
+        },
+      })
+    );
+
+    const result = await client.callTool({
+      name: "botbell_get_replies",
+      arguments: {},
+    });
+    const text = (result.content as Array<{ text: string }>)[0].text;
+    expect(text).toContain("[reply_to:msg_200]");
+    expect(text).toContain("Got it");
+    expect(text).toContain("Free text");
   });
 
   it("botbell_send handles quota exceeded", async () => {

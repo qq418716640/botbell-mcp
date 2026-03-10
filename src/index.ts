@@ -85,6 +85,14 @@ const actionsSchema = z.array(actionSchema).max(5).optional()
   .describe("Quick reply buttons (max 5). Use type 'input' for free-text option.");
 
 // ============================================================
+// Shared formatting
+// ============================================================
+
+export function formatPollMessage(m: Record<string, unknown>): string {
+  return `[${new Date((m.timestamp as number) * 1000).toISOString()}]${m.action ? ` [action:${m.action}]` : ""}${m.reply_to ? ` [reply_to:${m.reply_to}]` : ""} ${m.content}`;
+}
+
+// ============================================================
 // Helpers for sending/polling via a bot token
 // ============================================================
 
@@ -131,9 +139,7 @@ async function pollViaBotToken(
     return textResult("No new replies.");
   }
 
-  const text = messages.map((m) =>
-    `[${new Date((m.timestamp as number) * 1000).toISOString()}]${m.action ? ` [action:${m.action}]` : ""}${m.reply_to ? ` [reply_to:${m.reply_to}]` : ""} ${m.content}`
-  ).join("\n");
+  const text = messages.map(formatPollMessage).join("\n");
 
   return textResult(`${messages.length} new reply(s):\n\n${text}`);
 }
@@ -452,9 +458,7 @@ export function createServer(
             return textResult("No new replies.");
           }
 
-          const text = messages.map((m) =>
-            `[${new Date((m.timestamp as number) * 1000).toISOString()}]${m.action ? ` [action:${m.action}]` : ""} ${m.content}`
-          ).join("\n");
+          const text = messages.map(formatPollMessage).join("\n");
 
           return textResult(`${messages.length} new reply(s):\n\n${text}`);
         } catch (error) {

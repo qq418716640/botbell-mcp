@@ -48,6 +48,7 @@ export function handleApiError(result: { ok: boolean; status: number; data: Reco
   const errorData = result.data as { code?: number; message?: string };
   if (errorData.code === 40029) return "Rate limit exceeded (max 30 messages/minute per bot)";
   if (errorData.code === 40030) return "Monthly message quota exceeded";
+  if (errorData.code === 40033) return "Bot is paused. Resume it in the BotBell app to send messages.";
   if (errorData.code === 40003) return errorData.message || "Permission denied";
   return errorData.message || `API error (HTTP ${result.status})`;
 }
@@ -113,6 +114,8 @@ async function sendViaBotToken(
       ? "Rate limit exceeded (max 30 messages/minute per bot)"
       : errorData.code === 40030
       ? "Monthly message quota exceeded"
+      : errorData.code === 40033
+      ? "Bot is paused. Resume it in the BotBell app to send messages."
       : errorData.message || `API error (HTTP ${response.status})`;
     return errorResult(`Failed to send: ${errorMsg}`);
   }

@@ -1,6 +1,6 @@
 {
   "name": "@botbell/mcp-server",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "BotBell MCP Server - Let AI assistants send push notifications to your phone",
   "type": "module",
   "main": "dist/index.js",

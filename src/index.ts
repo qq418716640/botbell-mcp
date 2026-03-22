@@ -180,7 +180,7 @@ export function createServer(
 
   const server = new McpServer({
     name: "BotBell",
-    version: "0.2.1",
+    version: "0.2.2",
   });
 
   function api(method: string, path: string, body?: Record<string, unknown>) {
@@ -503,6 +503,40 @@ export function createServer(
       }
     );
   }
+
+  // ── Prompts ──
+
+  server.prompt(
+    "notify",
+    "Send a push notification to the user's phone with a summary of your work",
+    { message: z.string().optional().describe("Optional message to include in the notification") },
+    ({ message }) => ({
+      messages: [{
+        role: "user",
+        content: {
+          type: "text",
+          text: message
+            ? `Use botbell_send to notify me on my phone with this message: ${message}`
+            : "Summarize what you just did and send it to my phone as a push notification using botbell_send.",
+        },
+      }],
+    }),
+  );
+
+  server.prompt(
+    "ask",
+    "Ask the user a question via push notification and wait for their reply",
+    { question: z.string().describe("The question to ask the user") },
+    ({ question }) => ({
+      messages: [{
+        role: "user",
+        content: {
+          type: "text",
+          text: `Send this question to my phone using botbell_send: "${question}". Then use botbell_get_replies to wait for my response.`,
+        },
+      }],
+    }),
+  );
 
   return server;
 }

@@ -2,6 +2,8 @@
 
 # BotBell MCP Server
 
+[![MCP Badge](https://lobehub.com/badge/mcp/qq418716640-botbell-mcp)](https://lobehub.com/mcp/qq418716640-botbell-mcp)
+
 Let AI assistants send push notifications to your iPhone / Mac.
 
 ## What it does

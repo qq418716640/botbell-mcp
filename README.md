@@ -212,13 +212,19 @@ When the user taps an action, `botbell_get_replies` returns the `action` key alo
 [2026-01-15T10:30:00.000Z] [action:approve] Yes
 ```
 
-## Lightweight Alternative: Agent Skill
+## Lightweight Alternatives
 
-If you just need notifications from AI coding agents without multi-bot management, try the [BotBell Agent Skill](https://github.com/qq418716640/botbell-skill) — one command to install, zero dependencies, works with 30+ AI tools.
+If MCP is more than you need:
+
+- **SDKs** — Call the REST API directly from your code:
+  - Python: `pip install botbell` ([PyPI](https://pypi.org/project/botbell/) · [GitHub](https://github.com/qq418716640/botbell-python))
+  - JavaScript: `npm install @botbell/sdk` ([npm](https://www.npmjs.com/package/@botbell/sdk) · [GitHub](https://github.com/qq418716640/botbell-js))
+- **Agent Skill** — One command to install, zero dependencies, works with 30+ AI tools: [BotBell Agent Skill](https://github.com/qq418716640/botbell-skill)
 
 ## Links
 
 - [BotBell Website](https://botbell.app)
 - [API Documentation](https://botbell.app/docs/api)
+- [SDK Documentation](https://botbell.app/docs/sdk)
 - [MCP Setup Guide](https://botbell.app/docs/mcp)
 - [Agent Skill Guide](https://botbell.app/docs/skill)

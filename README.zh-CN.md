@@ -212,13 +212,19 @@ npm install -g @botbell/mcp-server
 [2026-01-15T10:30:00.000Z] [action:approve] 是
 ```
 
-## 轻量替代：Agent Skill
+## 轻量替代
 
-如果只需要 AI 编码助手发通知，不需要多 Bot 管理，可以试试 [BotBell Agent Skill](https://github.com/qq418716640/botbell-skill) —— 一条命令安装，零依赖，支持 30+ AI 工具。
+如果 MCP 超出你的需求：
+
+- **SDK** —— 直接在代码中调用 REST API：
+  - Python：`pip install botbell`（[PyPI](https://pypi.org/project/botbell/) · [GitHub](https://github.com/qq418716640/botbell-python)）
+  - JavaScript：`npm install @botbell/sdk`（[npm](https://www.npmjs.com/package/@botbell/sdk) · [GitHub](https://github.com/qq418716640/botbell-js)）
+- **Agent Skill** —— 一条命令安装，零依赖，支持 30+ AI 工具：[BotBell Agent Skill](https://github.com/qq418716640/botbell-skill)
 
 ## 链接
 
 - [BotBell 官网](https://botbell.app)
 - [API 文档](https://botbell.app/docs/api)
+- [SDK 文档](https://botbell.app/docs/sdk)
 - [MCP 配置指南](https://botbell.app/docs/mcp)
 - [Agent Skill 指南](https://botbell.app/docs/skill)

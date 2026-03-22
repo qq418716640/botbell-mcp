@@ -546,17 +546,17 @@ export function createServer(
 // ============================================================
 
 async function main() {
-  const token = process.env.BOTBELL_TOKEN;
+  const token = process.env.BOTBELL_TOKEN || "";
   if (!token) {
-    throw new Error(
-      "BOTBELL_TOKEN environment variable is required. " +
+    console.error(
+      "Warning: BOTBELL_TOKEN not set. Tools will return errors until configured. " +
       "Get your token from the BotBell app."
     );
   }
 
   const apiBase = process.env.BOTBELL_API_BASE || DEFAULT_API_BASE;
   const extraTokens = parseExtraTokens(process.env.BOTBELL_EXTRA_TOKENS || "");
-  const server = createServer(token, apiBase, extraTokens);
+  const server = createServer(token || "bt_unconfigured", apiBase, extraTokens);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
